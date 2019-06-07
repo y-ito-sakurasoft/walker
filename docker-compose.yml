@@ -1,0 +1,17 @@
+version: "3"
+
+services:
+  node:
+    tty: true
+    build: "."
+    volumes:
+      - ./app:/app
+      - ./resources:/resources
+    ports:
+      - "3000"
+  nginx:
+    build: ./nginx
+    ports:
+      - "80:80"
+    depends_on:
+      - "node"

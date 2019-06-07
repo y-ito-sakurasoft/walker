@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="UTF-8">
+  <title>Walker</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/101/three.min.js"></script>
+  <script src="./js/controls/OrbitControls.js"></script>
+  <script src="./js/loaders/GLTFLoader.js"></script>
+  <script src="./js/loaders/VRMLoader.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script type="text/javascript">
+
+    window.addEventListener('load', init);
+    window.addEventListener('resize', onResize);
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+
+    var scene;
+    var renderer;
+    var camera;
+    var clock = new THREE.Clock();
+
+    var keys = {
+      w: false,
+      a: false,
+      s: false,
+      d: false,
+    }
+
+    var socketio = io();
+    var users = {};
+    var name = Math.random().toString(36).slice(-8);
+
+    socketio.on("connected", function (user) {
+      const geometry = new THREE.TorusGeometry(1, 0.4, 24, 64);
+      const material = new THREE.MeshStandardMaterial({
+          color: new THREE.Color(user.color[0], user.color[1], user.color[2]).getHex(),
+          roughness: user.roughness,
+          metalness: user.metalness,
+      });
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.castShadow = true;
+      const obj = new THREE.Object3D();
+      obj.add(mesh);
+      scene.add(obj);
+      user.obj = obj;
+      user.mesh = mesh;
+      user.geometry = geometry;
+      user.material = material;
+
+      users[user.name] = user;
+    });
+    socketio.on("message", function (msg) {
+      console.log(msg);
+    });
+    socketio.on("disconnect", function (name) {
+      scene.remove(users[name].obj);
+      users[name].geometry.dispose();
+      users[name].material.dispose();
+      delete users[name];
+    });
+    socketio.on("update", function (data) {
+      for (key in data) {
+        if (data[key].name != name && users[data[key].name]) {
+          var n = data[key].name;
+
+          users[n].mesh.position.x = data[key].pos[0];
+          users[n].mesh.position.y = data[key].pos[1];
+          users[n].mesh.position.z = data[key].pos[2];
+
+          users[n].mesh.rotation.x = data[key].rot[0];
+          users[n].mesh.rotation.y = data[key].rot[1];
+          users[n].mesh.rotation.z = data[key].rot[2];
+        }
+      }
+    });
+    socketio.on("init", function (data) {
+      for (key in data) {
+        const geometry = new THREE.TorusGeometry(1, 0.4, 24, 64);
+        const material = new THREE.MeshStandardMaterial({
+            color: new THREE.Color(data[key].color[0], data[key].color[1], data[key].color[2]).getHex(),
+            roughness: data[key].roughness,
+            metalness: data[key].metalness,
+        });
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.castShadow = true;
+        const obj = new THREE.Object3D();
+        obj.add(mesh);
+        scene.add(obj);
+        data[key].obj = obj;
+        data[key].mesh = mesh;
+        data[key].geometry = geometry;
+        data[key].material = material;
+
+        users[data[key].name] = data[key];
+      }
+    });
+
+    function init() {
+
+      // サイズ
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+
+      const canvas = document.querySelector('#myCanvas');
+
+      // レンダラー
+      renderer = new THREE.WebGLRenderer({
+        canvas: canvas,
+        antialias: true
+      });
+      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.setSize(width, height);
+      renderer.autoClear = false;
+
+      // シーン
+      scene = new THREE.Scene();
+
+      // カメラ
+      camera = new THREE.PerspectiveCamera(45, width / height);
+      camera.position.set(0, 1, 8);
+
+      // 床
+      const geo = new THREE.PlaneGeometry(40, 40);
+      const mat = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        roughness: 0.9,
+        metalness: 0.0,
+        map: new THREE.TextureLoader().load("img/sample1.jpg"),
+        normalMap: new THREE.TextureLoader().load("img/sample1_normal.png"),
+        side: THREE.DoubleSide,
+      });
+      var plane = new THREE.Mesh(geo, mat);
+      plane.position.y = -1;
+      plane.rotation.set(Math.PI/2, 0, 0);
+      scene.add(plane);
+
+      // cubemap
+      let cubemap = LoadCubemap('img/skyboxs/test1', '.png');
+      let shader = THREE.ShaderLib['cube'];
+      shader.uniforms['tCube'].value = cubemap;
+      let cubemat = new THREE.ShaderMaterial({
+          fragmentShader: shader.fragmentShader,
+          vertexShader: shader.vertexShader,
+          uniforms: shader.uniforms,
+          depthWrite: false,
+          side: THREE.BackSide
+      });
+      let skybox = new THREE.Mesh(new THREE.BoxGeometry(200, 200, 200), cubemat);
+      scene.add(skybox);
+
+      // ディレクショナルライト
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
+      directionalLight.position.set(1, 1, 1);
+      scene.add(directionalLight);
+
+      // ambient light
+      const ambLight = new THREE.AmbientLight(0xffffff, 1.0);
+      scene.add(ambLight);
+
+      // Orbit Controls
+      const controls = new THREE.OrbitControls(camera);
+      controls.target.set(0, 0, 0);
+
+      tick();
+      function tick() {
+        var delta = clock.getDelta();
+
+        if (users[name]) {
+          var obj = users[name].obj;
+          var dir = new THREE.Vector3(obj.position.x - camera.position.x, 0, obj.position.z - camera.position.z);
+          dir.normalize();
+
+          var s = new THREE.Vector3(0, 0, 0);
+          if (keys.w) s.add(new THREE.Vector3(0, 0, 1));
+          if (keys.a) s.add(new THREE.Vector3(-1, 0, 0));
+          if (keys.s) s.add(new THREE.Vector3(0, 0, -1));
+          if (keys.d) s.add(new THREE.Vector3(1, 0, 0));
+
+          if (s.lengthSq() > 0)
+          {
+            var forward = new THREE.Vector3(0, 0, 1);
+            s.normalize();
+
+            var angle = forward.angleTo(s);
+            var cross = forward.clone().cross(s);
+            if (cross.y > 0) angle *= -1;
+
+            dir.applyAxisAngle(new THREE.Vector3(0, 1, 0), angle);
+
+            var moveX = dir.x * delta * 5.0;
+            var moveZ = dir.z * delta * 5.0;
+
+            obj.lookAt(obj.position.clone().add(dir));
+            obj.position.x += moveX;
+            obj.position.z += moveZ;
+
+            camera.position.x += moveX;
+            camera.position.z += moveZ;
+            controls.target.set(obj.position.x, obj.position.y, obj.position.z);
+
+            socketio.emit("update", {
+              pos: [obj.position.x, obj.position.y, obj.position.z],
+              rot: [obj.rotation.x, obj.rotation.y, obj.rotation.z],
+            });
+          } 
+        }
+
+        controls.update();
+
+        renderer.render(scene, camera);
+        requestAnimationFrame(tick);
+      }
+
+      socketio.emit("init");
+      socketio.emit("connected", name);
+    }
+
+    function LoadCubemap(url, ext) {
+
+      const urls = [
+          url + '/posx' + ext,
+          url + '/negx' + ext,
+          url + '/posy' + ext,
+          url + '/negy' + ext,
+          url + '/posz' + ext,
+          url + '/negz' + ext,
+      ];
+
+      return new THREE.CubeTextureLoader().load(urls);
+    }
+
+    function onResize() {
+      // サイズを取得
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+
+      // レンダラーのサイズを調整する
+      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.setSize(width, height);
+
+      // カメラのアスペクト比を正す
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+    }
+
+    function onKeyDown(e) {
+
+      switch(e.key) {
+          case 'w':
+              keys.w = true;
+              break;
+          case 'a':
+              keys.a = true;
+              break;
+          case 's':
+              keys.s = true;
+              break;
+          case 'd':
+              keys.d = true;
+              break;
+      }
+    }
+
+    function onKeyUp(e) {
+
+      switch(e.key) {
+          case 'w':
+              keys.w = false;
+              break;
+          case 'a':
+              keys.a = false;
+              break;
+          case 's':
+              keys.s = false;
+              break;
+          case 'd':
+              keys.d = false;
+              break;
+      }
+    }
+
+  </script>
+</head>
+
+<body style="margin: 0; overflow: hidden;">
+  <canvas id="myCanvas"></canvas>
+  <div style="position: fixed;">
+    <div style="z-index: 1;"><input type="text"></div>
+  </div>
+</body>
+
+</html>
